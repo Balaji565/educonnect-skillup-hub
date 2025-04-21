@@ -4,10 +4,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 
 export const MaterialsList = () => {
   const [accessCode, setAccessCode] = useState("");
-  const [materials, setMaterials] = useState<Array<{id: string, title: string, type: string, description: string}>>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [materials, setMaterials] = useState<Array<{
+    id: string;
+    title: string;
+    type: string;
+    description: string;
+    publicUrl?: string;
+  }>>([]);
 
   // Mock data for materials that would normally come from a database
   const availableMaterials = [
@@ -16,7 +24,7 @@ export const MaterialsList = () => {
     { id: "3", title: "Chemistry Lab Instructions", type: "DOCX", accessCode: "CHEM99", description: "Step-by-step guide for experiments" }
   ];
 
-  const handleAccessSubmit = (e: React.FormEvent) => {
+  const handleAccessSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!accessCode) {
@@ -28,34 +36,97 @@ export const MaterialsList = () => {
       return;
     }
 
-    // Check if the code matches any material
-    const matchingMaterial = availableMaterials.find(
+    setIsLoading(true);
+
+    // First, check our mock data (for demo purposes)
+    const mockMaterial = availableMaterials.find(
       material => material.accessCode === accessCode
     );
 
-    if (matchingMaterial) {
-      // Check if material is already in the list
-      if (!materials.some(m => m.id === matchingMaterial.id)) {
-        setMaterials([...materials, matchingMaterial]);
-        toast({
-          title: "Success!",
-          description: `You now have access to "${matchingMaterial.title}"`,
+    // In a real app, we would query Supabase Storage using the access code
+    try {
+      // Example of how we would search for files with the access code prefix
+      const { data: files, error } = await supabase.storage
+        .from('materials')
+        .list(accessCode, {
+          limit: 100,
+          offset: 0,
         });
+
+      if (error) {
+        throw error;
+      }
+
+      // If we found files, add them to our materials list
+      if (files && files.length > 0) {
+        const newMaterial = {
+          id: Date.now().toString(),
+          title: files[0].name.split('.')[0].replace(/-/g, ' '),
+          type: files[0].name.split('.').pop()?.toUpperCase() || "FILE",
+          description: "File uploaded to Supabase storage",
+          publicUrl: supabase.storage
+            .from('materials')
+            .getPublicUrl(`${accessCode}/${files[0].name}`).data.publicUrl
+        };
+
+        if (!materials.some(m => m.title === newMaterial.title)) {
+          setMaterials([...materials, newMaterial]);
+          toast({
+            title: "Success!",
+            description: `You now have access to "${newMaterial.title}"`,
+          });
+        } else {
+          toast({
+            title: "Already accessed",
+            description: "You already have access to this material",
+          });
+        }
+      } 
+      // If no files found in storage, try our mock data
+      else if (mockMaterial) {
+        if (!materials.some(m => m.id === mockMaterial.id)) {
+          setMaterials([...materials, mockMaterial]);
+          toast({
+            title: "Success!",
+            description: `You now have access to "${mockMaterial.title}"`,
+          });
+        } else {
+          toast({
+            title: "Already accessed",
+            description: "You already have access to this material",
+          });
+        }
       } else {
         toast({
-          title: "Already accessed",
-          description: "You already have access to this material",
+          title: "Invalid code",
+          description: "The access code you entered is not valid",
+          variant: "destructive"
         });
       }
-    } else {
+    } catch (error) {
+      console.error("Error accessing material:", error);
       toast({
-        title: "Invalid code",
-        description: "The access code you entered is not valid",
+        title: "Error",
+        description: "There was an error retrieving the material",
         variant: "destructive"
       });
+    } finally {
+      setIsLoading(false);
+      setAccessCode("");
     }
-    
-    setAccessCode("");
+  };
+
+  const handleDownload = (material: any) => {
+    if (material.publicUrl) {
+      // For files in Supabase Storage
+      window.open(material.publicUrl, '_blank');
+    } else {
+      // Mock download for demo entries
+      toast({
+        title: "Download started",
+        description: `Downloading ${material.title}...`,
+      });
+    }
   };
 
   return (
@@ -71,7 +142,9 @@ export const MaterialsList = () => {
               placeholder="e.g., BIO101"
               className="flex-1"
             />
-            <Button type="submit">Access</Button>
+            <Button type="submit" disabled={isLoading}>
+              {isLoading ? "Checking..." : "Access"}
+            </Button>
           </div>
           <p className="mt-2 text-sm text-gray-500">Enter the code provided by your teacher to access study materials.</p>
         </div>
@@ -89,7 +162,11 @@ export const MaterialsList = () => {
                   <span className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">
                     {material.type}
                   </span>
-                  <Button variant="outline" size="sm">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => handleDownload(material)}
+                  >
                     Download
                   </Button>
                 </div>

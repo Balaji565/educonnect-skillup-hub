@@ -5,11 +5,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { supabase } from "@/integrations/supabase/client";
 
 export const FileUploader = () => {
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [uploading, setUploading] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<Array<{id: string, title: string, type: string, accessCode: string}>>([
     { id: "1", title: "Introduction to Biology", type: "PDF", accessCode: "BIO101" },
     { id: "2", title: "Mathematics Formula Sheet", type: "PDF", accessCode: "MATH202" }
@@ -28,7 +30,7 @@ export const FileUploader = () => {
     return Math.random().toString(36).substring(2, 8).toUpperCase();
   };
 
-  const handleUpload = (e: React.FormEvent) => {
+  const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!file || !title) {
@@ -40,24 +42,66 @@ export const FileUploader = () => {
       return;
     }
 
-    // In a real app, this would upload to a server/storage
-    const newCode = generateAccessCode();
-    setAccessCode(newCode);
-    
-    const newFile = {
-      id: Date.now().toString(),
-      title,
-      type: file.name.split('.').pop()?.toUpperCase() || "FILE",
-      accessCode: newCode
-    };
-    
-    setUploadedFiles([...uploadedFiles, newFile]);
-    setIsOpen(true);
-    
-    // Reset form
-    setFile(null);
-    setTitle("");
-    setDescription("");
+    try {
+      setUploading(true);
+      
+      // Generate access code
+      const newCode = generateAccessCode();
+      
+      // Create a unique file path with the access code
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${newCode}/${title.replace(/\s+/g, '-').toLowerCase()}.${fileExt}`;
+      
+      // Upload file to Supabase Storage
+      const { error: uploadError } = await supabase.storage
+        .from('materials')
+        .upload(fileName, file);
+
+      if (uploadError) {
+        throw uploadError;
+      }
+      
+      // Get public URL for the file
+      const { data: urlData } = supabase.storage
+        .from('materials')
+        .getPublicUrl(fileName);
+      
+      // Store file metadata
+      const fileData = {
+        id: Date.now().toString(),
+        title,
+        type: fileExt?.toUpperCase() || "FILE",
+        accessCode: newCode,
+        description: description || "",
+        filePath: fileName,
+        publicUrl: urlData?.publicUrl || ""
+      };
+      
+      // In a production app, we would save this to a database table
+      // Here we're just updating the state
+      setUploadedFiles([...uploadedFiles, fileData]);
+      setAccessCode(newCode);
+      setIsOpen(true);
+      
+      toast({
+        title: "File uploaded successfully",
+        description: "Your material is now available with the access code",
+      });
+      
+    } catch (error) {
+      console.error("Upload error:", error);
+      toast({
+        title: "Upload failed",
+        description: "There was an error uploading your file",
+        variant: "destructive",
+      });
+    } finally {
+      setUploading(false);
+      // Reset form
+      setFile(null);
+      setTitle("");
+      setDescription("");
+    }
   };
 
   return (
@@ -95,8 +139,8 @@ export const FileUploader = () => {
           />
         </div>
         
-        <Button type="submit" className="w-full md:w-auto">
-          Upload Material
+        <Button type="submit" className="w-full md:w-auto" disabled={uploading}>
+          {uploading ? "Uploading..." : "Upload Material"}
         </Button>
       </form>
       
